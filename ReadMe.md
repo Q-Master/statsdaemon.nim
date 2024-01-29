@@ -11,6 +11,7 @@ This work is based upon the [bitly go statsd implementaion](https://github.com/b
 
 ## Configuring the daemon
 Daemon is supporting the ini format config.
+Filename is **statsd.ini**
 
 ### example:
 ```ini
@@ -19,7 +20,6 @@ graphite = 127.0.0.1:2003
 delete-gauges = true
 flush-interval = 10
 persist-count-keys = 60
-percentiles = ""
 ```
 ### supported parameters:
 | Parameter name | Description | Default value |
@@ -33,3 +33,27 @@ percentiles = ""
 | postfix | Postfix which will be added to all metrics | empty (**disabled**) |
 | persist-count-keys | Iterations to wait before delete the counter from the metrics if inactive | 60 |
 | percentiles | Percentile settings for timers as a list of numbers split by comma (e.x. 80,90,95) | empty (**disabled**) |
+
+
+## Building and installation
+To build this daemon you either should install nim toolchain see [Nim installation](https://nim-lang.org/install.html) or use a supplied docker file.
+
+### Manual building
+To build daemon you should use
+
+**Debug mode**
+```bash
+nimble build
+```
+
+**Release mode**
+```bash
+nimble build -d:release -l:"-flto" -t:"-flto" --opt:size --threads:on
+objcopy --strip-all -R .comment -R .comments  statsdaemon
+```
+
+### Docker building
+Docker building requires the preconfigured statsd.ini file to be in the current directory.
+```bash
+docker build --target release -t statsdaemon .
+```
