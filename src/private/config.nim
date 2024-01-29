@@ -64,12 +64,13 @@ proc initConfig(
     result.tcpEna = false
   result.persistCountKeys = persistCountKeys
   for p in percentiles:
-    result.percentiles.add(
-      Percentile(
-        flt: parseFloat(p.strip()),
-        str: p.replace('.', '_')
+    if p.len > 0:
+      result.percentiles.add(
+        Percentile(
+          flt: parseFloat(p.strip()),
+          str: p.replace('.', '_')
+        )
       )
-    )
 
 
 proc `$`*(p: Percentile): string =
