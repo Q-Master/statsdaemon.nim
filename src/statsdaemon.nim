@@ -251,11 +251,12 @@ proc onTimerEvent() {.async.} =
   num.inc(processTimers(buffer, now))
   num.inc(processSets(buffer, now))
   if num > 0:
-    echo "GRAPHITE: --"
-    echo buffer
-    echo "--"
-  else:
-    echo "GRAPHITE: nothing"
+    try:
+      let graphiteSock = newAsyncSocket(buffered=false)
+      await graphiteSock.connect(self.config.graphiteHost, self.config.graphitePort)
+      await graphiteSock.send(buffer)
+    except Exception as e:
+      echo "ERROR: ", e.msg
 
 
 proc timer() {.async.} =
@@ -268,18 +269,6 @@ proc timer() {.async.} =
       await onTimerEvent()
   await onTimerEvent()
 
-#[
-	_, err = client.Write(buffer.Bytes())
-	if err != nil {
-		errmsg := fmt.Sprintf("failed to write stats - %s", err)
-		return errors.New(errmsg)
-	}
-
-	log.Printf("sent %d stats to %s", num, *graphiteAddress)
-	if *heartbeatFilePath != "" {
-		heartbeat()
-	}
-]#
 
 proc initStatsD(cfg: StatsDConfig): StatsD =
   result.config = cfg
