@@ -15,7 +15,8 @@ RUN objcopy --strip-all -R .comment -R .comments  statsdaemon
 
 # main img
 FROM debian:stable-slim as release
-WORKDIR /projects
+WORKDIR /opt
 COPY --from=statsd-builder /projects/statsdaemon ./
 COPY statsd.ini ./
+VOLUME ["/opt/statsd.ini"]
 ENTRYPOINT ["./statsdaemon"]
