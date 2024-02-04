@@ -18,5 +18,4 @@ FROM debian:stable-slim as release
 WORKDIR /opt
 COPY --from=statsd-builder /projects/statsdaemon ./
 COPY statsd.ini ./
-VOLUME ["/opt/statsd.ini"]
 ENTRYPOINT ["./statsdaemon"]
