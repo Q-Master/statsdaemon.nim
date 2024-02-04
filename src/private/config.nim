@@ -71,6 +71,21 @@ proc initConfig(
           str: p.replace('.', '_')
         )
       )
+  echo "--- Current configuration ---"
+  echo "address ", result.addressHost, ":", result.addressPort
+  if result.tcpEna:
+    echo "TCP address ", result.tcpHost, ":", result.tcpPort
+  echo "graphite ", result.graphiteHost, ":", result.graphitePort
+  echo "prefix ", result.prefix
+  echo "postfix ", result.postfix
+  echo "flush interval ", result.flushInterval
+  echo "delete gauges ", result.deleteGauges
+  echo "persist count keys ", result.persistCountKeys
+  if result.percentiles.len > 0:
+    for p in result.percentiles:
+      echo "percentile ", p.str
+  echo "---"
+
 
 
 proc `$`*(p: Percentile): string =
@@ -91,5 +106,6 @@ proc readConfig*(): StatsDConfig =
       persistCountKeys = parseBiggestInt(conf.getSectionValue("", "persist-count-keys", "60")),
       percentiles = conf.getSectionValue("", "percentiles", "").split(',')
     )
-  except IOError:
+  except IOError as e:
+    echo "Error reading config (", e.msg, "). Using defaults."
     result = initConfig()

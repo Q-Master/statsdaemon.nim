@@ -1,0 +1,5 @@
+address = "0.0.0.0:8125"
+graphite = "127.0.0.1:2003"
+delete-gauges = true
+flush-interval = 10
+persist-count-keys = 60
