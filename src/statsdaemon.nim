@@ -12,6 +12,8 @@ type
     config: StatsDConfig
     udpSock: AsyncSocket
     tcpSock: AsyncSocket
+    graphiteSock: AsyncSocket
+    graphiteConnected: bool
     counters: Table[string, float64]
     gauges: Table[string, float64]
     countInactivity: Table[string, int64]
@@ -164,23 +166,35 @@ proc tcpListener() {.async.} =
     self.tcpSock.close()
 
 
+proc processBuf(buffer: var string, addition: string): bool =
+  if buffer.len + addition.len <= MAX_UDP_SIZE:
+    buffer.add(addition)
+    result = true
+  else:
+    result = false
+
+
 proc processCounters(buffer: var string, now: int): int =
   result = 0
   var toDelete: seq[string]
   for bucket, value in self.counters.pairs:
-    buffer.add(bucket & " " & $value & " " & $now & "\n")
-    toDelete.add(bucket)
-    result.inc
+    if buffer.processBuf(bucket & " " & $value & " " & $now & "\n"):
+      toDelete.add(bucket)
+      result.inc
+    else:
+      break
   for bucket in toDelete:
     self.counters.del(bucket)
   toDelete.setLen(0)
   for bucket, purgeCount in self.countInactivity.pairs:
     if purgeCount > 0:
-      buffer.add(bucket & " 0 " & $now & "\n")
-      result.inc
-    self.countInactivity[bucket].inc
-    if self.countInactivity[bucket] > self.config.persistCountKeys:
-      toDelete.add(bucket)
+      if buffer.processBuf(bucket & " 0 " & $now & "\n"):
+        result.inc
+        self.countInactivity[bucket].inc
+        if self.countInactivity[bucket] > self.config.persistCountKeys:
+          toDelete.add(bucket)
+      else:
+        break
   for bucket in toDelete:
     self.countInactivity.del(bucket)
 
@@ -189,21 +203,26 @@ proc processGauges(buffer: var string, now: int): int =
   result = 0
   var toDelete: seq[string]
   for bucket, value in self.gauges.pairs:
-    buffer.add(bucket & " " & $value & " " & $now & "\n")
-    result.inc
-    if self.config.deleteGauges:
-      toDelete.add(bucket)
+    if buffer.processBuf(bucket & " " & $value & " " & $now & "\n"):
+      result.inc
+      if self.config.deleteGauges:
+        toDelete.add(bucket)
+    else:
+      break
   if self.config.deleteGauges:
     for bucket in toDelete:
       self.gauges.del(bucket)
 
 
 proc processSets(buffer: var string, now: int): int =
-  result = self.sets.len
+  result = 0
   var toDelete: seq[string]
   for bucket, dataset in self.sets.pairs:
-    buffer.add(bucket & " " & $dataset.len & " " & $now & "\n")
-    toDelete.add(bucket)
+    if buffer.processBuf(bucket & " " & $dataset.len & " " & $now & "\n"):
+      result.inc
+      toDelete.add(bucket)
+    else:
+      break
   for bucket in toDelete:
     self.sets.del(bucket)
 
@@ -211,9 +230,9 @@ proc processSets(buffer: var string, now: int): int =
 proc processTimers(buffer: var string, now: int): int =
   result = 0
   var toDelete: seq[string]
+  var tmpStr: string
   for bucket, timer in self.timers.mpairs:
     let bwp = bucket[0 .. bucket.high-self.config.postfix.len]
-    result.inc
     timer.sort(order=Ascending)
     let minTimer = timer[0]
     let maxTimer = timer[timer.high]
@@ -229,34 +248,49 @@ proc processTimers(buffer: var string, now: int): int =
           idx.dec
         maxAtThreshold = timer[idx]
       if p.flt >= 0:
-        buffer.add(bwp & ".uppper_" & p.str & self.config.postfix & " " & $maxAtThreshold & " " & $now & "\n")
+        tmpStr.add(bwp & ".uppper_" & p.str & self.config.postfix & " " & $maxAtThreshold & " " & $now & "\n")
       else:
-        buffer.add(bwp & ".lower_" & p.str[1 .. p.str.high] & self.config.postfix & " " & $maxAtThreshold & " " & $now & "\n")
-    buffer.add(bwp & ".mean" & self.config.postfix & " " & $mean & " " & $now & "\n")
-    buffer.add(bwp & ".upper" & self.config.postfix & " " & $maxTimer & " " & $now & "\n")
-    buffer.add(bwp & ".lower" & self.config.postfix & " " & $minTimer & " " & $now & "\n")
-    buffer.add(bwp & ".count" & self.config.postfix & " " & $count & " " & $now & "\n")
-    toDelete.add(bucket)
+        tmpStr.add(bwp & ".lower_" & p.str[1 .. p.str.high] & self.config.postfix & " " & $maxAtThreshold & " " & $now & "\n")
+    tmpStr.add(bwp & ".mean" & self.config.postfix & " " & $mean & " " & $now & "\n")
+    tmpStr.add(bwp & ".upper" & self.config.postfix & " " & $maxTimer & " " & $now & "\n")
+    tmpStr.add(bwp & ".lower" & self.config.postfix & " " & $minTimer & " " & $now & "\n")
+    tmpStr.add(bwp & ".count" & self.config.postfix & " " & $count & " " & $now & "\n")
+    if buffer.processBuf(tmpStr):
+      result.inc
+      toDelete.add(bucket)
+    else:
+      break
   
   for bucket in toDelete:
     self.timers.del(bucket)
+
+
+proc reconnectGraphite() {.async.} =
+  if not self.graphiteConnected:
+    try:
+      await self.graphiteSock.connect(self.config.graphiteHost, self.config.graphitePort)
+      self.graphiteConnected = true
+    except:
+      self.graphiteConnected = false
 
 
 proc onTimerEvent() {.async.} =
   let now = getTime().toUnix()
   var num: int = 0
   var buffer: string
-  num.inc(processCounters(buffer, now))
-  num.inc(processGauges(buffer, now))
-  num.inc(processTimers(buffer, now))
-  num.inc(processSets(buffer, now))
-  if num > 0:
-    try:
-      let graphiteSock = newAsyncSocket(buffered=false)
-      await graphiteSock.connect(self.config.graphiteHost, self.config.graphitePort)
-      await graphiteSock.send(buffer)
-    except Exception as e:
-      echo "ERROR: ", e.msg
+  if self.graphiteConnected:
+    num.inc(processCounters(buffer, now))
+    num.inc(processGauges(buffer, now))
+    num.inc(processTimers(buffer, now))
+    num.inc(processSets(buffer, now))
+    if num > 0:
+      try:
+        await self.graphiteSock.send(buffer, flags={})
+      except Exception as e:
+        self.graphiteConnected = false
+        echo "ERROR: ", e.msg
+  else:
+    await reconnectGraphite()
 
 
 proc timer() {.async.} =
@@ -275,6 +309,7 @@ proc initStatsD(cfg: StatsDConfig): StatsD =
   result.udpSock = newAsyncSocket(sockType=SOCK_DGRAM, protocol=IPPROTO_UDP)
   if cfg.tcpEna:
     result.tcpSock = newAsyncSocket(buffered=false)
+  result.graphiteSock = newAsyncSocket(buffered=false)
 
 
 proc main(cfg: StatsDConfig) {.async.} =
