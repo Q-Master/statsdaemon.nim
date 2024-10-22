@@ -201,17 +201,16 @@ proc processCounters(buffer: var string, now: int): int =
 
 proc processGauges(buffer: var string, now: int): int =
   result = 0
-  var toDelete: seq[string]
-  for bucket, value in self.gauges.pairs:
-    if buffer.processBuf(bucket & " " & $value & " " & $now & "\n"):
+  var valuestr: string
+  var gCopy = self.gauges
+  for bucket, value in gCopy.pairs:
+    valuestr = if float(int(value)) == value: $int(value) else: $value
+    if buffer.processBuf(bucket & " " & valuestr & " " & $now & "\n"):
       result.inc
       if self.config.deleteGauges:
-        toDelete.add(bucket)
+        self.gauges.del(bucket)
     else:
       break
-  if self.config.deleteGauges:
-    for bucket in toDelete:
-      self.gauges.del(bucket)
 
 
 proc processSets(buffer: var string, now: int): int =
@@ -277,18 +276,24 @@ proc reconnectGraphite() {.async.} =
 proc onTimerEvent() {.async.} =
   let now = getTime().toUnix()
   var num: int = 0
-  var buffer: string
+  var buffer: seq[string]
   if self.graphiteConnected:
-    num.inc(processCounters(buffer, now))
-    num.inc(processGauges(buffer, now))
-    num.inc(processTimers(buffer, now))
-    num.inc(processSets(buffer, now))
-    if num > 0:
-      try:
-        await self.graphiteSock.send(buffer, flags={})
-      except Exception as e:
-        self.graphiteConnected = false
-        echo "ERROR: ", e.msg
+    while true:
+      var b: string
+      num = 0
+      num.inc(processCounters(b, now))
+      num.inc(processGauges(b, now))
+      num.inc(processTimers(b, now))
+      num.inc(processSets(b, now))
+      if b.len == 0:
+        break
+      buffer.add(b)
+    try:
+      for b in buffer:
+        await self.graphiteSock.send(b, flags={})
+    except Exception as e:
+      self.graphiteConnected = false
+      echo "ERROR: ", e.msg
   else:
     await reconnectGraphite()
 
