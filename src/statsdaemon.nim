@@ -321,6 +321,7 @@ proc main(cfg: StatsDConfig) {.async.} =
   self = initStatsD(cfg)
   let ulistenerFuture {.used.} = udpListener()
   let tlistenerFuture {.used.} = tcpListener()
+  await reconnectGraphite()
   let timerFuture {.used.} = timer()
   while running:
     await asyncdispatch.sleepAsync(100)
