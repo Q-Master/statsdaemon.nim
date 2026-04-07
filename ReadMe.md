@@ -21,6 +21,7 @@ delete-gauges = true
 flush-interval = 10
 persist-count-keys = 60
 ```
+
 ### supported parameters:
 | Parameter name | Description | Default value |
 |:--------------:|:------------|:--------------:|
@@ -33,7 +34,12 @@ persist-count-keys = 60
 | postfix | Postfix which will be added to all metrics | empty (**disabled**) |
 | persist-count-keys | Iterations to wait before delete the counter from the metrics if inactive | 60 |
 | percentiles | Percentile settings for timers as a list of numbers split by comma (e.x. 80,90,95) | empty (**disabled**) |
-
+| log-level | Logging level (might be debug, info, warn, error) | debug |
+| console-log | Log output to console (otherwise rsyslog) | true |
+| rsyslog-url | URL for rsyslog output (see [possible rsyslog urls](https://github.com/Q-Master/serverloggers.nim?tab=readme-ov-file#rsyslog-logger)) | unix:///dev/log |
+| log-format | Log format string (see [logging tags](https://github.com/Q-Master/serverloggers.nim?tab=readme-ov-file#formatting)) | "%(asctime).%(msecs) %(levelname) %(name) %(tags) %(message)" |
+| log-name | The tagged name for logger | StatsD |
+| dry-run | Wont connect to graphite if true, just log all the data prepared to be sent | false |
 
 ## Building and installation
 To build this daemon you either should install nim toolchain see [Nim installation](https://nim-lang.org/install.html) or use a supplied docker file.

@@ -11,3 +11,4 @@ bin           = @["statsdaemon"]
 # Dependencies
 
 requires "nim >= 2.0.0"
+requires "https://github.com/Q-Master/serverloggers.nim.git >= 0.1.1"

@@ -1,5 +1,7 @@
 
-import std/[parsecfg, strutils, nativesockets]
+import std/[parsecfg, strutils, nativesockets, logging, os]
+import pkg/[serverloggers]
+
 
 type
   StatsDConfig* = object
@@ -16,6 +18,12 @@ type
     tcpEna*: bool
     persistCountKeys*: int
     percentiles*: seq[Percentile]
+    logLevel*: logging.Level
+    consoleLog*: bool
+    rsysLogURL*: string
+    logFormat*: string
+    logName*: string
+    debug*: bool
   
   Percentile* = object
     flt*: float64
@@ -31,7 +39,13 @@ proc initConfig(
   postfix: string = "", 
   tcpAddr: string = "",
   persistCountKeys: int = 60,
-  percentiles: seq[string] = @[]
+  percentiles: seq[string] = @[],
+  logLevel: string = "",
+  consoleLog: bool = true,
+  rsysLogURL: string = "",
+  logFormat: string = "",
+  logName: string = "",
+  debug: bool = false
   ): StatsDConfig =
   var splits = address.rsplit(':', maxSplit=1)
   if splits.len == 1:
@@ -71,7 +85,28 @@ proc initConfig(
           str: p.replace('.', '_')
         )
       )
+  case logLevel.toUpperAscii()
+  of "DEBUG":
+    result.logLevel = logging.lvlDebug
+  of "INFO":
+    result.logLevel = logging.lvlInfo
+  of "WARN", "WARNING":
+    result.logLevel = logging.lvlWarn
+  of "ERROR":
+    result.logLevel = logging.lvlError
+  result.consoleLog = consoleLog
+  result.rsysLogURL = rsysLogURL
+  result.logFormat = logFormat
+  if logName.len > 0:
+    result.logName = logName
+  else:
+    result.logName = splitFile(getAppFilename()).name
+  result.debug = debug
   echo "--- Current configuration ---"
+  if consoleLog:
+    echo "Logging to console"
+  else:
+    echo "Logging to RSysLog URL: " & rsysLogURL
   echo "address ", result.addressHost, ":", result.addressPort
   if result.tcpEna:
     echo "TCP address ", result.tcpHost, ":", result.tcpPort
@@ -85,6 +120,8 @@ proc initConfig(
     for p in result.percentiles:
       echo "percentile ", p.str
   echo "---"
+  if debug:
+    echo "!!!! DEBUG DRY-RUN MODE !!!!"
 
 
 
@@ -104,7 +141,13 @@ proc readConfig*(): StatsDConfig =
       postfix = conf.getSectionValue("", "postfix", ""),
       tcpAddr = conf.getSectionValue("", "tcpaddr", ""),
       persistCountKeys = parseBiggestInt(conf.getSectionValue("", "persist-count-keys", "60")),
-      percentiles = conf.getSectionValue("", "percentiles", "").split(',')
+      percentiles = conf.getSectionValue("", "percentiles", "").split(','),
+      logLevel = conf.getSectionValue("", "log-level", "debug"),
+      consoleLog = parseBool(conf.getSectionValue("", "console-log", "true")),
+      rsysLogURL = conf.getSectionValue("", "rsyslog-url", "unix:///dev/log"),
+      logFormat = conf.getSectionValue("", "log-format", "%(asctime).%(msecs) %(process) %(levelname) %(filename):%(lineno)] %(name) %(tags) %(message)"),
+      logName = conf.getSectionValue("", "log-name", ""),
+      debug = parseBool(conf.getSectionValue("", "dry-run", "false"))
     )
   except IOError as e:
     echo "Error reading config (", e.msg, "). Using defaults."

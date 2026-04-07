@@ -1,4 +1,5 @@
 import std/[tables, nativesockets, asyncnet, exitprocs, asyncdispatch, strutils, sets, times, algorithm, sequtils, math]
+import pkg/[serverloggers]
 import ./private/config
 
 
@@ -10,6 +11,7 @@ const SLEEP_TIME = 500
 type  
   StatsD = object
     config: StatsDConfig
+    log: ServerLogger
     udpSock: AsyncSocket
     tcpSock: AsyncSocket
     graphiteSock: AsyncSocket
@@ -24,7 +26,7 @@ type
 var running: bool = true
 proc atExit() {.noconv.} =
   running = false
-  echo "Stopping application"
+  info("Stopping StatsD")
 
 var self {.noinit.}: StatsD
 
@@ -49,7 +51,7 @@ func sanitizeBucket(bucket: string): string =
 proc processData(data: string) =
   var split = data.split('|', maxSplit=2)
   if split.len < 2:
-    echo "ERROR: parse error for ", data
+    error("ERROR: parse error for " & data)
     return
   let keyVal = split[0]
   let typeCode = split[1]
@@ -59,16 +61,16 @@ proc processData(data: string) =
       try:
         sampling = parseFloat(split[2][1 .. split[2].high]).float32
       except ValueError:
-        echo "ERROR: Float parsing falied for ", split[2]
+        error("ERROR: Float parsing falied for " & split[2])
         return
   split = keyVal.split(':', maxSplit = 1)
   if split.len < 2:
-    echo "ERROR: parse error for ", data
+    error("ERROR: parse error for " & data)
     return
   let name = split[0]
   var val = split[1]
   if val.len == 0:
-    echo "ERROR: parse error for ", data
+    error("ERROR: parse error for " & data)
     return
   var floatVal: float64
   var strVal: string
@@ -77,7 +79,7 @@ proc processData(data: string) =
     try:
       floatVal = val.parseFloat()
     except ValueError:
-      echo "ERROR: Float parsing falied for ", val
+      error("ERROR: Float parsing falied for " & val)
       return
   of "g":
     if val[0] in ['+', '-']:
@@ -86,7 +88,7 @@ proc processData(data: string) =
     try:
       floatVal = val.parseFloat()
     except ValueError:
-      echo "ERROR: Float parsing falied for ", val
+      error("ERROR: Float parsing falied for " & val)
       return
   of "s":
     strVal = val
@@ -94,10 +96,10 @@ proc processData(data: string) =
     try:
       floatVal = val.parseFloat()
     except ValueError:
-      echo "ERROR: Float parsing falied for ", val
+      error("ERROR: Float parsing falied for " & val)
       return
   else:
-    echo "ERROR: Unknown type code ", typeCode, " for metric ", name
+    error("ERROR: Unknown type code " & typeCode & " for metric " & name)
     return
 
   let bucket = self.config.prefix & sanitizeBucket(name) & self.config.postfix 
@@ -128,13 +130,18 @@ proc processData(data: string) =
 proc udpListener() {.async.} =
   self.udpSock.bindAddr(self.config.addressPort, self.config.addressHost)
   while running:
-    var (recvData, _, _) = await self.udpSock.recvFrom(MAX_UDP_SIZE)
-    while true:
-      let slashN = recvData.split('\n', maxSplit=1)
-      if slashN.len == 1:
-        break
-      processData(slashN[0])
-      recvData = slashN[1]
+    try:
+      var (recvData, _, _) = await self.udpSock.recvFrom(MAX_UDP_SIZE)
+      while true:
+        let slashN = recvData.split('\n', maxSplit=1)
+        if slashN.len == 1:
+          break
+        processData(slashN[0])
+        recvData = slashN[1]
+    except Exception as e:
+      if running:
+        error("ERROR reading from UDP socket: " & e.msg)
+  info("Stopping UDP listener")
   self.udpSock.close()
 
 
@@ -142,7 +149,7 @@ proc tcpReader(sock: AsyncSocket) {.async.} =
   while running:
     var recvData = await sock.recv(MAX_TCP_SIZE)
     if recvData.len == 0:
-      echo "Socket closed"
+      error("Socket closed")
       break
     while true:
       let slashN = recvData.split('\n', maxSplit=1)
@@ -161,8 +168,10 @@ proc tcpListener() {.async.} =
       while true:
         let newSock = await self.tcpSock.accept()
         discard tcpReader(newSock)
-    except:
-      echo "TCP failed"
+    except Exception as e:
+      if running:
+        error("TCP listening error: " & e.msg)
+    info("Stopping TCP listener")
     self.tcpSock.close()
 
 
@@ -265,12 +274,17 @@ proc processTimers(buffer: var string, now: int): int =
 
 
 proc reconnectGraphite() {.async.} =
-  if not self.graphiteConnected:
-    try:
-      await self.graphiteSock.connect(self.config.graphiteHost, self.config.graphitePort)
-      self.graphiteConnected = true
-    except:
-      self.graphiteConnected = false
+  if self.config.debug:
+    self.graphiteConnected = true
+  else:
+    if not self.graphiteConnected and running:
+      info("Connecting Graphite instance")
+      try:
+        await self.graphiteSock.connect(self.config.graphiteHost, self.config.graphitePort)
+        self.graphiteConnected = true
+      except:
+        error("ERROR: can't connect to Graphite instance")
+        self.graphiteConnected = false
 
 
 proc onTimerEvent() {.async.} =
@@ -290,10 +304,13 @@ proc onTimerEvent() {.async.} =
       buffer.add(b)
     try:
       for b in buffer:
-        await self.graphiteSock.send(b, flags={})
+        if self.config.debug:
+          debug("Send: \"" & b & "\"")
+        else:
+          await self.graphiteSock.send(b, flags={})
     except Exception as e:
       self.graphiteConnected = false
-      echo "ERROR: ", e.msg
+      error("ERROR: " & e.msg)
   else:
     await reconnectGraphite()
 
@@ -309,8 +326,14 @@ proc timer() {.async.} =
   await onTimerEvent()
 
 
-proc initStatsD(cfg: StatsDConfig): StatsD =
+proc initStatsD(cfg: StatsDConfig): Future[StatsD] {.async.}=
   result.config = cfg
+  if cfg.consoleLog:
+    result.log = newConsoleLogger(levelThreshold=cfg.logLevel)
+  else:
+    let log = newRsyslogLogger(cfg.rsysLogURL, levelThreshold=cfg.logLevel)
+    result.log = log
+  result.log.open(cfg.logName)
   result.udpSock = newAsyncSocket(sockType=SOCK_DGRAM, protocol=IPPROTO_UDP)
   if cfg.tcpEna:
     result.tcpSock = newAsyncSocket(buffered=false)
@@ -318,21 +341,32 @@ proc initStatsD(cfg: StatsDConfig): StatsD =
 
 
 proc main(cfg: StatsDConfig) {.async.} =
-  self = initStatsD(cfg)
+  self = await initStatsD(cfg)
+  info("Starting StatsD")
+  if self.config.tcpEna:
+    info("Starting TCP listener")
   let ulistenerFuture {.used.} = udpListener()
+  info("Starting UDP listener")
   let tlistenerFuture {.used.} = tcpListener()
   await reconnectGraphite()
+  info("Starting timer events")
   let timerFuture {.used.} = timer()
   while running:
     await asyncdispatch.sleepAsync(100)
-  #await ulistener
-  #await tlistener
+  if self.config.tcpEna:
+    info("Closing TCP socket")
+    self.tcpSock.close()
+  info("Closing UDP socket")
+  self.udpSock.close()
+  await ulistenerFuture
+  info("Stopping timer events")
   await timerFuture
+  self.log.close()
+  info("StatsD stopped")
 
 
 when isMainModule:
   let cfg = readConfig()
-  echo("Starting application")
   addExitProc(atExit)
   setControlCHook(atExit)
   waitFor(main(cfg))
