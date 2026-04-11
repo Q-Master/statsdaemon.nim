@@ -329,9 +329,9 @@ proc timer() {.async.} =
 proc initStatsD(cfg: StatsDConfig): Future[StatsD] {.async.}=
   result.config = cfg
   if cfg.consoleLog:
-    result.log = newConsoleLogger(levelThreshold=cfg.logLevel)
+    result.log = newConsoleLogger(levelThreshold=cfg.logLevel, fmtStr=cfg.logFormat)
   else:
-    let log = newRsyslogLogger(cfg.rsysLogURL, levelThreshold=cfg.logLevel)
+    let log = newRsyslogLogger(cfg.rsysLogURL, levelThreshold=cfg.logLevel, fmtStr=cfg.logFormat)
     result.log = log
   result.log.open(cfg.logName)
   result.udpSock = newAsyncSocket(sockType=SOCK_DGRAM, protocol=IPPROTO_UDP)

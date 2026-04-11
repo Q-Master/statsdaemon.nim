@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.2.1"
+version       = "0.2.2"
 author        = "Vladimir Berezenko"
 description   = "StatsD compatible daemon in pure Nim"
 license       = "MIT"
