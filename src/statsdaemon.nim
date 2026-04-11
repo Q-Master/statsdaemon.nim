@@ -305,7 +305,7 @@ proc onTimerEvent() {.async.} =
     try:
       for b in buffer:
         if self.config.debug:
-          debug("Send: \"" & b & "\"")
+          debug("Send: \"" & b.strip() & "\"")
         else:
           await self.graphiteSock.send(b, flags={})
     except Exception as e:
