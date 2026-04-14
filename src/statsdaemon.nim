@@ -26,7 +26,6 @@ type
 var running: bool = true
 proc atExit() {.noconv.} =
   running = false
-  info("Stopping StatsD")
 
 var self {.noinit.}: StatsD
 
@@ -305,7 +304,7 @@ proc onTimerEvent() {.async.} =
     try:
       for b in buffer:
         if self.config.debug:
-          debug("Send: \"" & b.strip() & "\"")
+          info("Send: \"" & b.strip() & "\"")
         else:
           await self.graphiteSock.send(b, flags={})
     except Exception as e:
@@ -329,7 +328,7 @@ proc timer() {.async.} =
 proc initStatsD(cfg: StatsDConfig): Future[StatsD] {.async.}=
   result.config = cfg
   if cfg.consoleLog:
-    result.log = newConsoleLogger(levelThreshold=cfg.logLevel, fmtStr=cfg.logFormat)
+    result.log = newConsoleLogger(useStderr=true, levelThreshold=cfg.logLevel, fmtStr=cfg.logFormat)
   else:
     let log = newRsyslogLogger(cfg.rsysLogURL, levelThreshold=cfg.logLevel, fmtStr=cfg.logFormat)
     result.log = log
@@ -351,8 +350,10 @@ proc main(cfg: StatsDConfig) {.async.} =
   await reconnectGraphite()
   info("Starting timer events")
   let timerFuture {.used.} = timer()
+  info("StatsD Started")
   while running:
     await asyncdispatch.sleepAsync(100)
+  info("Stopping StatsD")
   if self.config.tcpEna:
     info("Closing TCP socket")
     self.tcpSock.close()
