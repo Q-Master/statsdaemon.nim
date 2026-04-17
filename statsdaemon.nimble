@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.2.3"
+version       = "0.3.0"
 author        = "Vladimir Berezenko"
 description   = "StatsD compatible daemon in pure Nim"
 license       = "MIT"
@@ -11,4 +11,4 @@ bin           = @["statsdaemon"]
 # Dependencies
 
 requires "nim >= 2.0.0"
-requires "https://github.com/Q-Master/serverloggers.nim.git >= 0.1.1"
+requires "https://github.com/Q-Master/serverloggers.nim.git >= 0.3.1"

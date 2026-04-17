@@ -327,11 +327,13 @@ proc timer() {.async.} =
 
 proc initStatsD(cfg: StatsDConfig): Future[StatsD] {.async.}=
   result.config = cfg
-  if cfg.consoleLog:
+  case cfg.logFacility
+  of LF_CONSOLE:
     result.log = newConsoleLogger(useStderr=true, levelThreshold=cfg.logLevel, fmtStr=cfg.logFormat)
-  else:
-    let log = newRsyslogLogger(cfg.rsysLogURL, levelThreshold=cfg.logLevel, fmtStr=cfg.logFormat)
-    result.log = log
+  of LF_FILE:
+    result.log = newFileLogger(cfg.fileName, cfg.fileRotationType, fmtStr=cfg.logFormat, maxRotations = cfg.fileMaxRotations)
+  of LF_RSYSLOG:
+    result.log = newRsyslogLogger(cfg.rsysLogURL, levelThreshold=cfg.logLevel, fmtStr=cfg.logFormat)
   result.log.open(cfg.logName)
   result.udpSock = newAsyncSocket(sockType=SOCK_DGRAM, protocol=IPPROTO_UDP)
   if cfg.tcpEna:

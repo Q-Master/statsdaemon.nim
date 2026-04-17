@@ -4,6 +4,11 @@ import pkg/[serverloggers]
 
 
 type
+  LoggingFacility* = enum
+    LF_CONSOLE
+    LF_FILE
+    LF_RSYSLOG
+
   StatsDConfig* = object
     addressHost*: string
     addressPort*: Port
@@ -19,7 +24,10 @@ type
     persistCountKeys*: int
     percentiles*: seq[Percentile]
     logLevel*: logging.Level
-    consoleLog*: bool
+    logFacility*: LoggingFacility
+    fileName*: string
+    fileMaxRotations*: int
+    fileRotationType*: FileLoggerRotations
     rsysLogURL*: string
     logFormat*: string
     logName*: string
@@ -41,7 +49,10 @@ proc initConfig(
   persistCountKeys: int = 60,
   percentiles: seq[string] = @[],
   logLevel: string = "",
-  consoleLog: bool = true,
+  logTo: string = "",
+  fileName: string = "",
+  fileMaxRotations: int = 1,
+  fileRotationType: string = "",
   rsysLogURL: string = "",
   logFormat: string = "",
   logName: string = "",
@@ -94,7 +105,26 @@ proc initConfig(
     result.logLevel = logging.lvlWarn
   of "ERROR":
     result.logLevel = logging.lvlError
-  result.consoleLog = consoleLog
+
+  case logTo.toLowerAscii()
+  of "console":
+    result.logFacility = LF_CONSOLE
+  of "file":
+    result.logFacility = LF_FILE
+  of "rsyslog":
+    result.logFacility = LF_RSYSLOG
+
+  case fileRotationType.toLowerAscii()
+  of "none":
+    result.fileRotationType = FL_NONE
+  of "hourly":
+    result.fileRotationType = FL_HOUR
+  of "daily":
+    result.fileRotationType = FL_DAY
+  of "weekly":
+    result.fileRotationType = FL_WEEK
+  result.fileMaxRotations = fileMaxRotations
+  result.fileName = fileName
   result.rsysLogURL = rsysLogURL
   result.logFormat = logFormat
   if logName.len > 0:
@@ -103,9 +133,12 @@ proc initConfig(
     result.logName = splitFile(getAppFilename()).name
   result.debug = debug
   echo "--- Current configuration ---"
-  if consoleLog:
+  case result.logFacility:
+  of LF_CONSOLE:
     echo "Logging to console"
-  else:
+  of LF_FILE:
+    echo "Logging to file: " & fileName
+  of LF_RSYSLOG:
     echo "Logging to RSysLog URL: " & rsysLogURL
   echo "address ", result.addressHost, ":", result.addressPort
   if result.tcpEna:
@@ -143,7 +176,10 @@ proc readConfig*(): StatsDConfig =
       persistCountKeys = parseBiggestInt(conf.getSectionValue("", "persist-count-keys", "60")),
       percentiles = conf.getSectionValue("", "percentiles", "").split(','),
       logLevel = conf.getSectionValue("", "log-level", "debug"),
-      consoleLog = parseBool(conf.getSectionValue("", "console-log", "true")),
+      logTo = conf.getSectionValue("", "log-facility", "console"),
+      fileName = conf.getSectionValue("", "log-filename", "./statsd.log"),
+      fileMaxRotations = parseBiggestInt(conf.getSectionValue("", "log-max-rotations", "1")),
+      fileRotationType = conf.getSectionValue("", "log-rotation-type", "none"),
       rsysLogURL = conf.getSectionValue("", "rsyslog-url", "unix:///dev/log"),
       logFormat = conf.getSectionValue("", "log-format", "%(asctime).%(msecs) %(process) %(levelname) %(filename):%(lineno)] %(name) %(tags) %(message)"),
       logName = conf.getSectionValue("", "log-name", ""),

@@ -35,7 +35,10 @@ persist-count-keys = 60
 | persist-count-keys | Iterations to wait before delete the counter from the metrics if inactive | 60 |
 | percentiles | Percentile settings for timers as a list of numbers split by comma (e.x. 80,90,95) | empty (**disabled**) |
 | log-level | Logging level (might be debug, info, warn, error) | debug |
-| console-log | Log output to console (otherwise rsyslog) | true |
+| log-facility | The name of a logging facility (console, file, rsyslog) | console|
+| log-filename | The file name if log facility is file | ./statsd.log |
+| log-max-rotations | The maximum amount of rotated logs if log facility is file | 1 |
+| log-rotation-type | The file log rotation type (none, hourly, daily, weekly) | none |
 | rsyslog-url | URL for rsyslog output (see [possible rsyslog urls](https://github.com/Q-Master/serverloggers.nim?tab=readme-ov-file#rsyslog-logger)) | unix:///dev/log |
 | log-format | Log format string (see [logging tags](https://github.com/Q-Master/serverloggers.nim?tab=readme-ov-file#formatting)) | "%(asctime).%(msecs) %(levelname) %(name) %(tags) %(message)" |
 | log-name | The tagged name for logger | StatsD |
