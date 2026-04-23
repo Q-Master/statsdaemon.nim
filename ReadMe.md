@@ -28,11 +28,12 @@ persist-count-keys = 60
 | address | UDP socket address on which daemon will listen incoming packets  |    0.0.0.0:8125    |
 | tcpaddr | TCP socket address on which daemon will listen incoming packets  |  empty (**disabled**) |
 | graphite | Address of graphite instance | 127.0.0.1:2003 |
-| delete-gauges | Will clear gauges after sending to graphite | true |
+| delete-gauges | If need to delete gauges after sending them to graphite | true |
 | flush-interval | Interval in seconds to send data to graphite | 10 |
 | prefix | Prefix which will be added to all metrics | empty (**disabled**) |
 | postfix | Postfix which will be added to all metrics | empty (**disabled**) |
-| persist-count-keys | Iterations to wait before delete the counter from the metrics if inactive | 60 |
+| delete-counters | If need to delete counters after sending them to graphite | true |
+| persist-count-keys | Iterations to wait before delete the counter from the metrics if inactive, even if delete-counters is false | 60 |
 | percentiles | Percentile settings for timers as a list of numbers split by comma (e.x. 80,90,95) | empty (**disabled**) |
 | log-level | Logging level (might be debug, info, warn, error) | debug |
 | log-facility | The name of a logging facility (console, file, rsyslog) | console|

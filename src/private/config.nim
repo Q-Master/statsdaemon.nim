@@ -21,6 +21,7 @@ type
     tcpHost*: string
     tcpPort*: Port
     tcpEna*: bool
+    deleteCounters*: bool
     persistCountKeys*: int
     percentiles*: seq[Percentile]
     logLevel*: logging.Level
@@ -46,6 +47,7 @@ proc initConfig(
   prefix: string = "", 
   postfix: string = "", 
   tcpAddr: string = "",
+  deleteCounters: bool = true,
   persistCountKeys: int = 60,
   percentiles: seq[string] = @[],
   logLevel: string = "",
@@ -87,15 +89,22 @@ proc initConfig(
     result.tcpEna = true
   else:
     result.tcpEna = false
+  result.deleteCounters = deleteCounters
   result.persistCountKeys = persistCountKeys
+  var pVal: float
   for p in percentiles:
     if p.len > 0:
-      result.percentiles.add(
-        Percentile(
-          flt: parseFloat(p.strip()),
-          str: p.replace('.', '_')
+      pVal = parseFloat(p.strip())
+      if pVal > 0 and pVal <= 100:
+        result.percentiles.add(
+          Percentile(
+            flt: pVal,
+            str: p.replace('.', '_')
+          )
         )
-      )
+      else:
+        echo "ERROR: Percentile value can't be ", pVal
+        raise newException(ValueError, "Percentile value can't be " & $pVal)
   case logLevel.toUpperAscii()
   of "DEBUG":
     result.logLevel = logging.lvlDebug
@@ -105,6 +114,9 @@ proc initConfig(
     result.logLevel = logging.lvlWarn
   of "ERROR":
     result.logLevel = logging.lvlError
+  else:
+    echo "ERROR: wrong value for log-level ", logLevel
+    raise newException(ValueError, "Wrong value for log-level " & logLevel)
 
   case logTo.toLowerAscii()
   of "console":
@@ -113,6 +125,9 @@ proc initConfig(
     result.logFacility = LF_FILE
   of "rsyslog":
     result.logFacility = LF_RSYSLOG
+  else:
+    echo "ERROR: wrong value for log-facility ", logTo
+    raise newException(ValueError, "Wrong value for log-facility " & logTo)
 
   case fileRotationType.toLowerAscii()
   of "none":
@@ -123,6 +138,11 @@ proc initConfig(
     result.fileRotationType = FL_DAY
   of "weekly":
     result.fileRotationType = FL_WEEK
+  else:
+    if result.logFacility == LF_FILE:
+      echo "ERROR: wrong value for log-rotation-type ", fileRotationType
+      raise newException(ValueError, "Wrong value for log-rotation-type " & fileRotationType)
+
   result.fileMaxRotations = fileMaxRotations
   result.fileName = fileName
   result.rsysLogURL = rsysLogURL
@@ -148,7 +168,9 @@ proc initConfig(
   echo "postfix ", result.postfix
   echo "flush interval ", result.flushInterval
   echo "delete gauges ", result.deleteGauges
-  echo "persist count keys ", result.persistCountKeys
+  echo "delete counters ", result.deleteCounters
+  if result.deleteCounters:
+    echo "persist count keys ", result.persistCountKeys
   if result.percentiles.len > 0:
     for p in result.percentiles:
       echo "percentile ", p.str
@@ -173,6 +195,7 @@ proc readConfig*(): StatsDConfig =
       prefix = conf.getSectionValue("", "prefix", ""),
       postfix = conf.getSectionValue("", "postfix", ""),
       tcpAddr = conf.getSectionValue("", "tcpaddr", ""),
+      deleteCounters = parseBool(conf.getSectionValue("", "delete-counters", "true")),
       persistCountKeys = parseBiggestInt(conf.getSectionValue("", "persist-count-keys", "60")),
       percentiles = conf.getSectionValue("", "percentiles", "").split(','),
       logLevel = conf.getSectionValue("", "log-level", "debug"),
@@ -185,6 +208,6 @@ proc readConfig*(): StatsDConfig =
       logName = conf.getSectionValue("", "log-name", ""),
       debug = parseBool(conf.getSectionValue("", "dry-run", "false"))
     )
-  except IOError as e:
+  except Exception as e:
     echo "Error reading config (", e.msg, "). Using defaults."
     result = initConfig()

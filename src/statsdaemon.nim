@@ -47,7 +47,7 @@ func sanitizeBucket(bucket: string): string =
   return ns
 
 
-proc processData(data: string) =
+proc processData(data: string) {.async.} =
   var split = data.split('|', maxSplit=2)
   if split.len < 2:
     error("ERROR: parse error for " & data)
@@ -59,6 +59,9 @@ proc processData(data: string) =
     if split.len == 3 and split[2].len > 0 and split[2][0] == '@':
       try:
         sampling = parseFloat(split[2][1 .. split[2].high]).float32
+        if sampling <= 0:
+          error("ERROR: counter sampling can't be negative or zero'")
+          return
       except ValueError:
         error("ERROR: Float parsing falied for " & split[2])
         return
@@ -115,8 +118,8 @@ proc processData(data: string) =
       else:
         gaugeValue += floatVal
     elif strVal == "-":
-      if floatVal > gaugeValue:
-        gaugeValue = 0
+      if floatVal > float64.low + gaugeValue:
+        gaugeValue = float64.low
       else:
         gaugeValue -= floatVal
     self.gauges[bucket] = gaugeValue
@@ -135,7 +138,7 @@ proc udpListener() {.async.} =
         let slashN = recvData.split('\n', maxSplit=1)
         if slashN.len == 1:
           break
-        processData(slashN[0])
+        await processData(slashN[0])
         recvData = slashN[1]
     except Exception as e:
       if running:
@@ -154,7 +157,7 @@ proc tcpReader(sock: AsyncSocket) {.async.} =
       let slashN = recvData.split('\n', maxSplit=1)
       if slashN.len == 1:
         break
-      processData(slashN[0])
+      await processData(slashN[0])
       recvData = slashN[1]
   sock.close()
 
@@ -185,25 +188,24 @@ proc processBuf(buffer: var string, addition: string): bool =
 proc processCounters(buffer: var string, now: int): int =
   result = 0
   var toDelete: seq[string]
-  for bucket, value in self.counters.pairs:
+  for bucket, value in self.counters.mpairs:
     if buffer.processBuf(bucket & " " & $value & " " & $now & "\n"):
-      toDelete.add(bucket)
+      if self.config.deleteCounters:
+        toDelete.add(bucket)
+      else:
+        value = 0
+        if self.countInactivity.hasKey(bucket):
+          if self.countInactivity[bucket] > self.config.persistCountKeys:
+            toDelete.add(bucket)
+          else:
+            self.countInactivity[bucket].inc
+        else:
+          self.countInactivity[bucket] = 0
       result.inc
     else:
       break
   for bucket in toDelete:
     self.counters.del(bucket)
-  toDelete.setLen(0)
-  for bucket, purgeCount in self.countInactivity.pairs:
-    if purgeCount > 0:
-      if buffer.processBuf(bucket & " 0 " & $now & "\n"):
-        result.inc
-        self.countInactivity[bucket].inc
-        if self.countInactivity[bucket] > self.config.persistCountKeys:
-          toDelete.add(bucket)
-      else:
-        break
-  for bucket in toDelete:
     self.countInactivity.del(bucket)
 
 
@@ -225,7 +227,7 @@ proc processSets(buffer: var string, now: int): int =
   result = 0
   var toDelete: seq[string]
   for bucket, dataset in self.sets.pairs:
-    if buffer.processBuf(bucket & " " & $dataset.len & " " & $now & "\n"):
+    if buffer.processBuf(bucket & ".count " & $dataset.len & " " & $now & "\n"):
       result.inc
       toDelete.add(bucket)
     else:
@@ -253,9 +255,12 @@ proc processTimers(buffer: var string, now: int): int =
         var idx: int = int(floor(((abs / 100.0) * count.float64) + 0.5))
         if p.flt >= 0:
           idx.dec
-        maxAtThreshold = timer[idx]
+        if idx > timer.high:
+          maxAtThreshold = maxTimer
+        else:
+          maxAtThreshold = timer[idx]
       if p.flt >= 0:
-        tmpStr.add(bwp & ".uppper_" & p.str & self.config.postfix & " " & $maxAtThreshold & " " & $now & "\n")
+        tmpStr.add(bwp & ".upper_" & p.str & self.config.postfix & " " & $maxAtThreshold & " " & $now & "\n")
       else:
         tmpStr.add(bwp & ".lower_" & p.str[1 .. p.str.high] & self.config.postfix & " " & $maxAtThreshold & " " & $now & "\n")
     tmpStr.add(bwp & ".mean" & self.config.postfix & " " & $mean & " " & $now & "\n")
@@ -334,7 +339,7 @@ proc initStatsD(cfg: StatsDConfig): Future[StatsD] {.async.}=
     result.log = newFileLogger(cfg.fileName, cfg.fileRotationType, fmtStr=cfg.logFormat, maxRotations = cfg.fileMaxRotations)
   of LF_RSYSLOG:
     result.log = newRsyslogLogger(cfg.rsysLogURL, levelThreshold=cfg.logLevel, fmtStr=cfg.logFormat)
-  result.log.open(cfg.logName)
+  await result.log.open(cfg.logName)
   result.udpSock = newAsyncSocket(sockType=SOCK_DGRAM, protocol=IPPROTO_UDP)
   if cfg.tcpEna:
     result.tcpSock = newAsyncSocket(buffered=false)
@@ -364,7 +369,7 @@ proc main(cfg: StatsDConfig) {.async.} =
   await ulistenerFuture
   info("Stopping timer events")
   await timerFuture
-  self.log.close()
+  await self.log.close()
   info("StatsD stopped")
 
 
